@@ -1,0 +1,50 @@
+# Configuración del proyecto
+project:
+  id: "your-gcp-project-id"
+  region: "us-central1"
+  zone: "us-central1-a"
+
+# Configuración de GCS
+gcs:
+  bucket_name: "retail-claims-etl"
+  temp_path: "temp"
+  bronze_prefix: "bronze/retail-claims"
+
+# Configuración SFTP
+sftp:
+  host: "${SFTP_HOST}"
+  port: 22
+  username: "${SFTP_USERNAME}"
+  password: "${SFTP_PASSWORD}"
+  remote_path: "/retail-claims"
+
+# Configuración BigQuery
+bigquery:
+  datasets:
+    bronze: "retail_claims_bronze"
+    silver: "retail_claims_silver"
+    gold: "retail_claims_gold"
+  
+  tables:
+    bronze_external: "claims_external"
+    silver: "claims_structured"
+    gold: "claims_business_rules"
+
+# Configuración Dataproc
+dataproc:
+  cluster_name: "retail-claims-cluster"
+  machine_types:
+    master: "n1-standard-4"
+    worker: "n1-standard-4"
+  worker_count: 2
+  spark_config:
+    executor_cores: 4
+    executor_memory: "8g"
+    driver_cores: 4
+    driver_memory: "8g"
+
+# Configuración Cloud Composer (Airflow)
+composer:
+  schedule_interval: "0 2 * * *"
+  max_active_runs: 1
+  email_alerts: "data-alerts@company.com"

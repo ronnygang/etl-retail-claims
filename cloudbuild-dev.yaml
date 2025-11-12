@@ -1,0 +1,58 @@
+steps:
+  # DEV Environment - Tests y validaciones
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'test-dev'
+    args:
+      - 'pytest'
+      - 'tests/unit/'
+      - '-v'
+      - '--tb=short'
+      - '--cov=.'
+      - '--cov-fail-under=70'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-dev'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:dev-$SHORT_SHA'
+      - '-f'
+      - 'cloud_functions/ingest_sftp_to_gcs/Dockerfile'
+      - 'cloud_functions/ingest_sftp_to_gcs/'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-dev'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:dev-$SHORT_SHA'
+
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'deploy-dev'
+    args:
+      - 'run'
+      - 'gcloud'
+      - 'functions'
+      - 'deploy'
+      - 'ingest-sftp-to-gcs-dev'
+      - '--runtime=python39'
+      - '--trigger-http'
+      - '--allow-unauthenticated'
+      - '--entry-point=ingest_sftp_to_gcs'
+      - '--source=cloud_functions/ingest_sftp_to_gcs'
+      - '--region=us-central1'
+      - '--set-env-vars=SFTP_HOST=${_DEV_SFTP_HOST},SFTP_USERNAME=${_DEV_SFTP_USERNAME},SFTP_PASSWORD=${_DEV_SFTP_PASSWORD},GCS_BUCKET=${_DEV_GCS_BUCKET}'
+
+images:
+  - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:dev-$SHORT_SHA'
+
+timeout: '1800s'
+machineType: 'N1_HIGHCPU_8'
+
+substitutions:
+  _DEV_SFTP_HOST: ''
+  _DEV_SFTP_USERNAME: ''
+  _DEV_SFTP_PASSWORD: ''
+  _DEV_GCS_BUCKET: 'retail-claims-etl-dev'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

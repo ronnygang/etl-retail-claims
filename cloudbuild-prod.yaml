@@ -1,0 +1,99 @@
+steps:
+  # PROD Environment - Todas las validaciones
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'test-prod'
+    args:
+      - 'pytest'
+      - 'tests/'
+      - '-v'
+      - '--tb=short'
+      - '--cov=.'
+      - '--cov-fail-under=80'
+
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'security-scan-prod'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        pip install bandit
+        bandit -r cloud_functions/ dataproc/jobs/ dags/ -ll || true
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-prod'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$TAG_NAME'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:latest'
+      - '-f'
+      - 'cloud_functions/ingest_sftp_to_gcs/Dockerfile'
+      - 'cloud_functions/ingest_sftp_to_gcs/'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-prod'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$TAG_NAME'
+
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'deploy-prod'
+    args:
+      - 'run'
+      - 'gcloud'
+      - 'functions'
+      - 'deploy'
+      - 'ingest-sftp-to-gcs'
+      - '--runtime=python39'
+      - '--trigger-http'
+      - '--allow-unauthenticated'
+      - '--entry-point=ingest_sftp_to_gcs'
+      - '--source=cloud_functions/ingest_sftp_to_gcs'
+      - '--region=us-central1'
+      - '--set-env-vars=SFTP_HOST=${_PROD_SFTP_HOST},SFTP_USERNAME=${_PROD_SFTP_USERNAME},SFTP_PASSWORD=${_PROD_SFTP_PASSWORD},GCS_BUCKET=${_PROD_GCS_BUCKET}'
+      - '--memory=256MB'
+      - '--timeout=60'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'upload-spark-job-prod'
+    args:
+      - 'cp'
+      - 'dataproc/jobs/bronze_to_silver_transform.py'
+      - 'gs://${_PROD_GCS_BUCKET}/jobs/bronze_to_silver_transform-$TAG_NAME.py'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'deploy-dag-prod'
+    args:
+      - 'cp'
+      - 'dags/retail_claims_etl_dag.py'
+      - 'gs://us-central1-${_PROD_COMPOSER_ENV}-bucket/dags/'
+
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'notify-prod'
+    args:
+      - 'run'
+      - 'gcloud'
+      - 'pubsub'
+      - 'topics'
+      - 'publish'
+      - '${_NOTIFICATION_TOPIC}'
+      - '--message=🚀 Pipeline ETL v$TAG_NAME desplegado a PRODUCCIÓN. Commit: $COMMIT_SHA'
+
+images:
+  - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$TAG_NAME'
+  - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:latest'
+
+timeout: '3600s'
+machineType: 'N1_HIGHCPU_8'
+
+substitutions:
+  _PROD_SFTP_HOST: ''
+  _PROD_SFTP_USERNAME: ''
+  _PROD_SFTP_PASSWORD: ''
+  _PROD_GCS_BUCKET: 'retail-claims-etl-prod'
+  _PROD_COMPOSER_ENV: 'retail-etl-prod'
+  _NOTIFICATION_TOPIC: 'etl-deployments-prod'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

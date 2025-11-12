@@ -1,0 +1,36 @@
+cluster_name: "retail-claims-cluster"
+region: "us-central1"
+zone: "us-central1-a"
+
+# Configuración del cluster
+master_config:
+  num_instances: 1
+  machine_type_uri: "n1-standard-4"
+  disk_config:
+    boot_disk_size_gb: 500
+
+worker_config:
+  num_instances: 2
+  machine_type_uri: "n1-standard-4"
+  disk_config:
+    boot_disk_size_gb: 500
+
+software_config:
+  image_version: "2.1-debian11"
+  properties:
+    spark:executor:memory: "8g"
+    spark:executor:cores: "4"
+    spark:driver:memory: "8g"
+    spark:driver:cores: "4"
+    spark:sql:adaptive:enabled: "true"
+    spark:sql:parquet:compression:codec: "snappy"
+
+gce_cluster_config:
+  network_uri: "default"
+  tags:
+    - "dataproc"
+    - "retail-claims"
+
+initialization_actions:
+  - executable_file: "gs://goog-dataproc-initialization-actions/python/pip-install.sh"
+    execution_timeout: "10m"

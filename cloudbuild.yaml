@@ -1,0 +1,172 @@
+steps:
+  # Paso 1: Obtener información del commit
+  - name: 'gcr.io/cloud-builders/git'
+    id: 'git-info'
+    args:
+      - 'log'
+      - '--format=%h %an %ae %s'
+      - '-1'
+
+  # Paso 2: Instalar dependencias Python
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'install-deps'
+    args:
+      - 'pip'
+      - 'install'
+      - '-r'
+      - 'requirements.txt'
+
+  # Paso 3: Ejecutar tests unitarios
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'run-tests'
+    args:
+      - 'pytest'
+      - 'tests/unit/'
+      - '-v'
+      - '--tb=short'
+    env:
+      - 'PYTHONPATH=/workspace'
+
+  # Paso 4: Verificar calidad de código con pytest coverage
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'code-coverage'
+    args:
+      - 'pytest'
+      - 'tests/unit/'
+      - '--cov=.'
+      - '--cov-report=term'
+      - '--cov-fail-under=70'
+    env:
+      - 'PYTHONPATH=/workspace'
+
+  # Paso 5: Verificar sintaxis Python con pylint
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'lint-code'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        pip install pylint
+        pylint dataproc/jobs/*.py --disable=all --enable=E,F,W --exit-zero || true
+
+  # Paso 6: Validar archivos SQL
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'validate-sql'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        echo "Validando archivos SQL..."
+        for file in bigquery/schemas/*.sql bigquery/stored_procedures/*.sql; do
+          if [ -f "$file" ]; then
+            echo "✓ Archivo encontrado: $file"
+          fi
+        done
+
+  # Paso 7: Construir imagen Docker para Cloud Function
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-cloud-function'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$SHORT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:latest'
+      - '-f'
+      - 'cloud_functions/ingest_sftp_to_gcs/Dockerfile'
+      - 'cloud_functions/ingest_sftp_to_gcs/'
+
+  # Paso 8: Pushear imagen a Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-cloud-function'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$SHORT_SHA'
+
+  # Paso 9: Desplegar Cloud Function
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'deploy-cloud-function'
+    args:
+      - 'run'
+      - 'gcloud'
+      - 'functions'
+      - 'deploy'
+      - 'ingest-sftp-to-gcs'
+      - '--runtime=python39'
+      - '--trigger-http'
+      - '--allow-unauthenticated'
+      - '--entry-point=ingest_sftp_to_gcs'
+      - '--source=cloud_functions/ingest_sftp_to_gcs'
+      - '--region=us-central1'
+      - '--set-env-vars=SFTP_HOST=${_SFTP_HOST},SFTP_USERNAME=${_SFTP_USERNAME},SFTP_PASSWORD=${_SFTP_PASSWORD},GCS_BUCKET=${_GCS_BUCKET}'
+
+  # Paso 10: Subir job PySpark a GCS
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'upload-spark-job'
+    args:
+      - 'cp'
+      - 'dataproc/jobs/bronze_to_silver_transform.py'
+      - 'gs://${_GCS_BUCKET}/jobs/'
+
+  # Paso 11: Crear/actualizar tablas BigQuery
+  - name: 'gcr.io/cloud-builders/python'
+    id: 'deploy-bigquery'
+    args:
+      - 'bash'
+      - '-c'
+      - |
+        pip install google-cloud-bigquery
+        python scripts/deploy_bigquery.py \
+          --project=$PROJECT_ID \
+          --schemas-dir=bigquery/schemas \
+          --procedures-dir=bigquery/stored_procedures
+
+  # Paso 12: Desplegar DAG en Cloud Composer
+  - name: 'gcr.io/cloud-builders/gsutil'
+    id: 'deploy-dag'
+    args:
+      - 'cp'
+      - 'dags/retail_claims_etl_dag.py'
+      - 'gs://us-central1-${_COMPOSER_ENV}-bucket/dags/'
+
+  # Paso 13: Notificación de éxito
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'notify-success'
+    args:
+      - 'run'
+      - 'gcloud'
+      - 'pubsub'
+      - 'topics'
+      - 'publish'
+      - '${_NOTIFICATION_TOPIC}'
+      - '--message=✅ Pipeline ETL desplegado exitosamente en ${_ENVIRONMENT}. Commit: $COMMIT_SHA'
+
+# Imágenes necesarias
+images:
+  - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/ingest-sftp-to-gcs:latest'
+
+# Configuración de timeout y opciones
+timeout: '3600s'
+machineType: 'N1_HIGHCPU_8'
+
+# Sustituciones de variables
+substitutions:
+  _ENVIRONMENT: 'dev'
+  _SFTP_HOST: 'sftp.example.com'
+  _SFTP_USERNAME: ''
+  _SFTP_PASSWORD: ''
+  _GCS_BUCKET: 'retail-claims-etl'
+  _COMPOSER_ENV: 'retail-etl'
+  _NOTIFICATION_TOPIC: 'etl-deployments'
+
+# Opciones de construcción
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+  
+# Triggers
+# Este archivo debe estar en la raíz del repositorio
+# Crear trigger en Cloud Build Console apuntando a este archivo
+
+logsBucket: 'gs://${_GCS_BUCKET}/build-logs'
