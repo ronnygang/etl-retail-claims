@@ -50,3 +50,7 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# GitHub (internal)
+.github/instructions/
+.github/instructions/*.instructions.md
