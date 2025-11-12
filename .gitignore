@@ -51,4 +51,6 @@ htmlcov/
 *.log
 logs/
 
-.github/
+# GitHub (internal)
+.github/instructions/
+.github/instructions/*.instructions.md
